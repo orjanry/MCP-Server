@@ -17,13 +17,91 @@ jobs:
       - name: Send message to Discord
         env:
           WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
-        run: |
-          EVENT="${{ github.event_name }}"
-          REPO="${{ github.repository }}"
-          ACTOR="${{ github.actor }}"
-          URL="${{ github.server_url }}/${{ github.repository }}"
-          MSG="[$EVENT] $REPO by $ACTOR - $URL"
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
 
-          curl -H "Content-Type: application/json" \
-               -d "{\"content\":\"$MSG\"}" \
-               "$WEBHOOK_URL"
+          # push
+          PUSH_COMPARE_URL: ${{ github.event.compare }}
+          PUSH_COMMITS_JSON: ${{ toJson(github.event.commits) }}
+          PUSH_COMMIT_COUNT: ${{ github.event.commits && github.event.commits.size || 0 }}
+          PUSH_HEAD_MSG: ${{ github.event.head_commit.message }}
+
+          # pull_request
+          PR_ACTION: ${{ github.event.action }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+
+          # issues
+          ISSUE_ACTION: ${{ github.event.action }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+
+          # release
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+        run: |
+          set -euo pipefail
+
+          # Helper: safely build JSON with jq (avoids quote/newline issues)
+          send_discord() {
+            local content="$1"
+            jq -n --arg content "$content" '{content:$content}' \
+              | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK_URL" >/dev/null
+          }
+
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            # Build a nice commit list (up to 10)
+            # Each line: - <shortsha> <message> (by <author>)
+            commit_lines="$(echo "$PUSH_COMMITS_JSON" | jq -r '
+              .[:10][] | "- " + (.id[0:7]) + " " + (.message | split("\n")[0]) + " (by " + (.author.name // "unknown") + ")"
+            ')"
+
+            # Count commits in this push (GitHub already gives full list for this push)
+            commit_count="$(echo "$PUSH_COMMITS_JSON" | jq 'length')"
+
+            msg="**[push]** \`$REPO\`
+By: **$ACTOR**
+Commits: **$commit_count**
+Compare: $PUSH_COMPARE_URL
+Latest: **$(echo "${PUSH_HEAD_MSG:-}" | head -n 1)**
+$commit_lines"
+
+            send_discord "$msg"
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            msg="**[pull_request:$PR_ACTION]** \`$REPO\`
+PR #$PR_NUMBER: **$PR_TITLE**
+By: **$ACTOR**
+$PR_URL"
+            send_discord "$msg"
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == "issues" ]]; then
+            msg="**[issue:$ISSUE_ACTION]** \`$REPO\`
+Issue #$ISSUE_NUMBER: **$ISSUE_TITLE**
+By: **$ACTOR**
+$ISSUE_URL"
+            send_discord "$msg"
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == "release" ]]; then
+            title="${RELEASE_NAME:-release}"
+            msg="**[release]** \`$REPO\`
+**$title** (\`$RELEASE_TAG\`)
+By: **$ACTOR**
+$RELEASE_URL"
+            send_discord "$msg"
+            exit 0
+          fi
+
+          # Fallback (should rarely happen)
+          send_discord "**[$EVENT_NAME]** \`$REPO\` by **$ACTOR** - $REPO_URL"
