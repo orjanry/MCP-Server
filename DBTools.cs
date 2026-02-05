@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace DefaultNamespace;
 
-[MCPServerToolType]
+[McpServerToolType]
 public class DBTools
 {
     // Attributes: McpServerTool registers this method as a callable tool that the llm can invoke.
