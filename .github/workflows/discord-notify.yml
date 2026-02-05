@@ -7,30 +7,42 @@ on:
 jobs:
   notify:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Send push message to Discord
+      - name: Send pretty Discord embed
         env:
           WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
           REPO: ${{ github.repository }}
           ACTOR: ${{ github.actor }}
+          AVATAR: ${{ github.actor_avatar_url }}
           COMPARE_URL: ${{ github.event.compare }}
           COMMITS_JSON: ${{ toJson(github.event.commits) }}
-          HEAD_MSG: ${{ github.event.head_commit.message }}
+          REF: ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
-          # count commits in this push
-          commit_count="$(echo "$COMMITS_JSON" | jq 'length')"
+          count=$(echo "$COMMITS_JSON" | jq 'length')
 
-          # head commit first line
-          head_line="$(printf "%s" "${HEAD_MSG:-}" | head -n 1)"
+          commits=$(echo "$COMMITS_JSON" | jq -r '
+            .[0:10][] |
+            "`" + .id[0:7] + "` " +
+            (.message | split("\n")[0]) +
+            " – " + (.author.name // "unknown")
+          ' | paste -sd '\n' -)
 
-          # up to 10 commit lines: - <shortsha> <title>
-          commit_lines="$(echo "$COMMITS_JSON" | jq -r '.[0:10][] | "- " + (.id[0:7]) + " " + (.message | split("\n")[0])')"
-
-          # build ONE-LINE content string with \n (Discord renders newlines)
-          content="**[push]** \`$REPO\`\nBy: **$ACTOR**\nCommits in this push: **$commit_count**\nCompare: $COMPARE_URL\nLatest: **$head_line**\n$commit_lines"
-
-          # send as JSON safely (jq escapes everything)
-          jq -n --arg content "$content" '{content:$content}' \
-            | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK_URL" >/dev/null
+          jq -n \
+            --arg title "[$REPO:$REF] $count new commits" \
+            --arg desc "$commits" \
+            --arg url "$COMPARE_URL" \
+            --arg avatar "$AVATAR" \
+            '{
+              embeds: [{
+                title: $title,
+                url: $url,
+                description: $desc,
+                color: 3066993,
+                thumbnail: { url: $avatar },
+                footer: { text: "GitHub" }
+              }]
+            }' \
+          | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK_URL"
