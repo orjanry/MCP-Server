@@ -1,0 +1,29 @@
+name: Discord notify
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  issues:
+    types: [opened, closed, reopened]
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send message to Discord
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          EVENT="${{ github.event_name }}"
+          REPO="${{ github.repository }}"
+          ACTOR="${{ github.actor }}"
+          URL="${{ github.server_url }}/${{ github.repository }}"
+          MSG="[$EVENT] $REPO by $ACTOR - $URL"
+
+          curl -H "Content-Type: application/json" \
+               -d "{\"content\":\"$MSG\"}" \
+               "$WEBHOOK_URL"
