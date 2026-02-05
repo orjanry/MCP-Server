@@ -3,112 +3,34 @@ name: Discord notify
 on:
   push:
     branches: ["main"]
-  pull_request:
-    types: [opened, synchronize, reopened, closed]
-  issues:
-    types: [opened, closed, reopened]
-  release:
-    types: [published]
 
 jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Send message to Discord
+      - name: Send push message to Discord
         env:
           WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
-          EVENT_NAME: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           ACTOR: ${{ github.actor }}
-          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
-
-          # push
-          PUSH_COMPARE_URL: ${{ github.event.compare }}
-          PUSH_COMMITS_JSON: '${{ toJson(github.event.commits) }}'
-          PUSH_HEAD_MSG: '${{ github.event.head_commit.message }}'
-
-          # pull_request
-          PR_ACTION: ${{ github.event.action }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: '${{ github.event.pull_request.title }}'
-          PR_URL: ${{ github.event.pull_request.html_url }}
-
-          # issues
-          ISSUE_ACTION: ${{ github.event.action }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_TITLE: '${{ github.event.issue.title }}'
-          ISSUE_URL: ${{ github.event.issue.html_url }}
-
-          # release
-          RELEASE_NAME: '${{ github.event.release.name }}'
-          RELEASE_TAG: '${{ github.event.release.tag_name }}'
-          RELEASE_URL: ${{ github.event.release.html_url }}
+          COMPARE_URL: ${{ github.event.compare }}
+          COMMITS_JSON: ${{ toJson(github.event.commits) }}
+          HEAD_MSG: ${{ github.event.head_commit.message }}
         run: |
           set -euo pipefail
 
-          send_discord () {
-            local content="$1"
-            jq -n --arg content "$content" '{content:$content}' \
-              | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK_URL" >/dev/null
-          }
+          # count commits in this push
+          commit_count="$(echo "$COMMITS_JSON" | jq 'length')"
 
-          if [[ "$EVENT_NAME" == "push" ]]; then
-            commit_count="$(echo "$PUSH_COMMITS_JSON" | jq 'length')"
+          # head commit first line
+          head_line="$(printf "%s" "${HEAD_MSG:-}" | head -n 1)"
 
-            commit_lines="$(echo "$PUSH_COMMITS_JSON" | jq -r '
-              .[:10][] | "- " + (.id[0:7]) + " " + (.message | split("\n")[0]) + " (by " + (.author.name // "unknown") + ")"
-            ')"
+          # up to 10 commit lines: - <shortsha> <title>
+          commit_lines="$(echo "$COMMITS_JSON" | jq -r '.[0:10][] | "- " + (.id[0:7]) + " " + (.message | split("\n")[0])')"
 
-            head_line="$(printf "%s" "${PUSH_HEAD_MSG:-}" | head -n 1)"
+          # build ONE-LINE content string with \n (Discord renders newlines)
+          content="**[push]** \`$REPO\`\nBy: **$ACTOR**\nCommits in this push: **$commit_count**\nCompare: $COMPARE_URL\nLatest: **$head_line**\n$commit_lines"
 
-            msg="$(cat <<EOF
-**[push]** \`$REPO\`
-By: **$ACTOR**
-Commits in this push: **$commit_count**
-Compare: $PUSH_COMPARE_URL
-Latest: **$head_line**
-$commit_lines
-EOF
-)"
-            send_discord "$msg"
-            exit 0
-          fi
-
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            msg="$(cat <<EOF
-**[pull_request:$PR_ACTION]** \`$REPO\`
-PR #$PR_NUMBER: **$PR_TITLE**
-By: **$ACTOR**
-$PR_URL
-EOF
-)"
-            send_discord "$msg"
-            exit 0
-          fi
-
-          if [[ "$EVENT_NAME" == "issues" ]]; then
-            msg="$(cat <<EOF
-**[issue:$ISSUE_ACTION]** \`$REPO\`
-Issue #$ISSUE_NUMBER: **$ISSUE_TITLE**
-By: **$ACTOR**
-$ISSUE_URL
-EOF
-)"
-            send_discord "$msg"
-            exit 0
-          fi
-
-          if [[ "$EVENT_NAME" == "release" ]]; then
-            title="${RELEASE_NAME:-release}"
-            msg="$(cat <<EOF
-**[release]** \`$REPO\`
-**$title** (\`$RELEASE_TAG\`)
-By: **$ACTOR**
-$RELEASE_URL
-EOF
-)"
-            send_discord "$msg"
-            exit 0
-          fi
-
-          send_discord "**[$EVENT_NAME]** \`$REPO\` by **$ACTOR** - $REPO_URL"
+          # send as JSON safely (jq escapes everything)
+          jq -n --arg content "$content" '{content:$content}' \
+            | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK_URL" >/dev/null
