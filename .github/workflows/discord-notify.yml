@@ -24,84 +24,91 @@ jobs:
 
           # push
           PUSH_COMPARE_URL: ${{ github.event.compare }}
-          PUSH_COMMITS_JSON: ${{ toJson(github.event.commits) }}
-          PUSH_COMMIT_COUNT: ${{ github.event.commits && github.event.commits.size || 0 }}
-          PUSH_HEAD_MSG: ${{ github.event.head_commit.message }}
+          PUSH_COMMITS_JSON: '${{ toJson(github.event.commits) }}'
+          PUSH_HEAD_MSG: '${{ github.event.head_commit.message }}'
 
           # pull_request
           PR_ACTION: ${{ github.event.action }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_TITLE: '${{ github.event.pull_request.title }}'
           PR_URL: ${{ github.event.pull_request.html_url }}
 
           # issues
           ISSUE_ACTION: ${{ github.event.action }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_TITLE: '${{ github.event.issue.title }}'
           ISSUE_URL: ${{ github.event.issue.html_url }}
 
           # release
-          RELEASE_NAME: ${{ github.event.release.name }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: '${{ github.event.release.name }}'
+          RELEASE_TAG: '${{ github.event.release.tag_name }}'
           RELEASE_URL: ${{ github.event.release.html_url }}
         run: |
           set -euo pipefail
 
-          # Helper: safely build JSON with jq (avoids quote/newline issues)
-          send_discord() {
+          send_discord () {
             local content="$1"
             jq -n --arg content "$content" '{content:$content}' \
               | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK_URL" >/dev/null
           }
 
           if [[ "$EVENT_NAME" == "push" ]]; then
-            # Build a nice commit list (up to 10)
-            # Each line: - <shortsha> <message> (by <author>)
+            commit_count="$(echo "$PUSH_COMMITS_JSON" | jq 'length')"
+
             commit_lines="$(echo "$PUSH_COMMITS_JSON" | jq -r '
               .[:10][] | "- " + (.id[0:7]) + " " + (.message | split("\n")[0]) + " (by " + (.author.name // "unknown") + ")"
             ')"
 
-            # Count commits in this push (GitHub already gives full list for this push)
-            commit_count="$(echo "$PUSH_COMMITS_JSON" | jq 'length')"
+            head_line="$(printf "%s" "${PUSH_HEAD_MSG:-}" | head -n 1)"
 
-            msg="**[push]** \`$REPO\`
+            msg="$(cat <<EOF
+**[push]** \`$REPO\`
 By: **$ACTOR**
-Commits: **$commit_count**
+Commits in this push: **$commit_count**
 Compare: $PUSH_COMPARE_URL
-Latest: **$(echo "${PUSH_HEAD_MSG:-}" | head -n 1)**
-$commit_lines"
-
+Latest: **$head_line**
+$commit_lines
+EOF
+)"
             send_discord "$msg"
             exit 0
           fi
 
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            msg="**[pull_request:$PR_ACTION]** \`$REPO\`
+            msg="$(cat <<EOF
+**[pull_request:$PR_ACTION]** \`$REPO\`
 PR #$PR_NUMBER: **$PR_TITLE**
 By: **$ACTOR**
-$PR_URL"
+$PR_URL
+EOF
+)"
             send_discord "$msg"
             exit 0
           fi
 
           if [[ "$EVENT_NAME" == "issues" ]]; then
-            msg="**[issue:$ISSUE_ACTION]** \`$REPO\`
+            msg="$(cat <<EOF
+**[issue:$ISSUE_ACTION]** \`$REPO\`
 Issue #$ISSUE_NUMBER: **$ISSUE_TITLE**
 By: **$ACTOR**
-$ISSUE_URL"
+$ISSUE_URL
+EOF
+)"
             send_discord "$msg"
             exit 0
           fi
 
           if [[ "$EVENT_NAME" == "release" ]]; then
             title="${RELEASE_NAME:-release}"
-            msg="**[release]** \`$REPO\`
+            msg="$(cat <<EOF
+**[release]** \`$REPO\`
 **$title** (\`$RELEASE_TAG\`)
 By: **$ACTOR**
-$RELEASE_URL"
+$RELEASE_URL
+EOF
+)"
             send_discord "$msg"
             exit 0
           fi
 
-          # Fallback (should rarely happen)
           send_discord "**[$EVENT_NAME]** \`$REPO\` by **$ACTOR** - $REPO_URL"
