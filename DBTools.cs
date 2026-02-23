@@ -79,4 +79,104 @@ public class FileTools
         
         return string.Join("\n", lines);
     }
+    
+    // Searches inside one file and returns line numbers with small snippets.
+    [McpServerTool, Description("Finds occurrences of a query in a file and returns line numbers with small snippets.")]
+    public static string FindInFile(
+        [Description("Path to file")] string path,
+        [Description("Search query (case-insensitive)")] string query,
+        [Description("Max number of matches to return")] int maxMatches = 5,
+        [Description("Max snippet characters per match")] int snippetChars = 160)
+    {
+        if (!File.Exists(path))
+            return $"File not found: {path}";
+
+        if (string.IsNullOrWhiteSpace(query))
+            return "Query was empty.";
+
+        maxMatches = Math.Clamp(maxMatches, 1, 50);
+        snippetChars = Math.Clamp(snippetChars, 40, 400);
+
+        var results = new List<object>();
+        int lineNo = 0;
+
+        foreach (var line in File.ReadLines(path))
+        {
+            lineNo++;
+
+            if (line.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                var snippet = line.Trim();
+                if (snippet.Length > snippetChars)
+                    snippet = snippet[..snippetChars] + "...";
+
+                results.Add(new { Line = lineNo, Snippet = snippet });
+
+                if (results.Count >= maxMatches)
+                    break;
+            }
+        }
+
+        return JsonSerializer.Serialize(results, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+        // Searches across multiple files and returns file path + line number + snippet.
+    // Used to locate the correct file before calling ReadFile.
+    [McpServerTool, Description("Searches across project files and returns file path, line number, and small snippet.")]
+    public static string ProjectSearch(
+        [Description("Root directory to search under")] string rootDir,
+        [Description("Query string to search for (case-insensitive)")] string query,
+        [Description("Max number of results to return")] int limit = 10,
+        [Description("Only search files with this extension (for example .cs)")] string extension = ".cs",
+        [Description("Max snippet characters per result")] int snippetChars = 160)
+    {
+        if (!Directory.Exists(rootDir))
+            return "Root directory not found.";
+
+        if (string.IsNullOrWhiteSpace(query))
+            return "Query was empty.";
+
+        limit = Math.Clamp(limit, 1, 50);
+        snippetChars = Math.Clamp(snippetChars, 40, 400);
+
+        var results = new List<object>();
+
+        foreach (var file in Directory.EnumerateFiles(rootDir, "*.*", SearchOption.AllDirectories))
+        {
+            if (file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")) continue;
+            if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")) continue;
+            if (file.Contains($"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}")) continue;
+
+            if (!Path.GetExtension(file).Equals(extension, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            int lineNo = 0;
+
+            try
+            {
+                foreach (var line in File.ReadLines(file))
+                {
+                    lineNo++;
+
+                    if (line.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        var snippet = line.Trim();
+                        if (snippet.Length > snippetChars)
+                            snippet = snippet[..snippetChars] + "...";
+
+                        results.Add(new { File = file, Line = lineNo, Snippet = snippet });
+
+                        if (results.Count >= limit)
+                            break;
+                    }
+                }
+            }
+            catch { }
+
+            if (results.Count >= limit)
+                break;
+        }
+
+        return JsonSerializer.Serialize(results, new JsonSerializerOptions { WriteIndented = true });
+    }
 }
