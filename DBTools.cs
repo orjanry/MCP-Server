@@ -179,4 +179,126 @@ public class FileTools
 
         return JsonSerializer.Serialize(results, new JsonSerializerOptions { WriteIndented = true });
     }
+
+        [McpServerTool, Description("Lists files under a folder (skips bin/obj/.git) with an optional extension filter.")]
+    public static string ListFiles(
+        [Description("Root directory to search under")] string rootDir,
+        [Description("Only include this extension (e.g. .cs). Leave empty for all files.")] string? extension = ".cs",
+        [Description("Max number of files to return")] int limit = 100)
+    {
+        if (!Directory.Exists(rootDir))
+            return "Root directory not found.";
+
+        limit = Math.Clamp(limit, 1, 1000);
+
+        var results = new List<string>();
+
+        foreach (var file in Directory.EnumerateFiles(rootDir, "*.*", SearchOption.AllDirectories))
+        {
+            if (file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")) continue;
+            if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")) continue;
+            if (file.Contains($"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}")) continue;
+
+            if (!string.IsNullOrWhiteSpace(extension) &&
+                !Path.GetExtension(file).Equals(extension, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            results.Add(file);
+
+            if (results.Count >= limit)
+                break;
+        }
+
+        return JsonSerializer.Serialize(results);
+    }
+
+    [McpServerTool, Description("Extracts a C# method or class by name from a file (simple brace counting).")]
+    public static string GetCSharpMember(
+        [Description("Path to .cs file")] string path,
+        [Description("Name of method or class (example: Index, Add, BlogController)")] string name,
+        [Description("Max lines to return")] int maxLines = 200)
+    {
+        if (!File.Exists(path))
+            return $"File not found: {path}";
+
+        if (string.IsNullOrWhiteSpace(name))
+            return "Name was empty.";
+
+        maxLines = Math.Clamp(maxLines, 20, 2000);
+
+        var lines = File.ReadAllLines(path);
+
+        // 1) Find a line that likely contains the member
+        int start = -1;
+        for (int i = 0; i < lines.Length; i++)
+        {
+            // match "Name(" (method) OR "class Name" (type)
+            if (lines[i].Contains(name + "(", StringComparison.Ordinal) ||
+                lines[i].Contains("class " + name, StringComparison.Ordinal) ||
+                lines[i].Contains("record " + name, StringComparison.Ordinal) ||
+                lines[i].Contains("interface " + name, StringComparison.Ordinal) ||
+                lines[i].Contains("struct " + name, StringComparison.Ordinal))
+            {
+                start = i;
+                break;
+            }
+        }
+
+        if (start == -1)
+            return $"Could not find '{name}' in {path}";
+
+        // 2) Find the first '{' after start
+        int bodyStart = -1;
+        for (int i = start; i < lines.Length && i < start + 50; i++)
+        {
+            if (lines[i].Contains("{"))
+            {
+                bodyStart = i;
+                break;
+            }
+        }
+
+        if (bodyStart == -1)
+            return $"Found '{name}', but could not find '{{' for its body.";
+
+        // 3) Count { } until we close the block
+        int depth = 0;
+        int end = -1;
+
+        for (int i = bodyStart; i < lines.Length; i++)
+        {
+            foreach (char c in lines[i])
+            {
+                if (c == '{') depth++;
+                if (c == '}') depth--;
+            }
+
+            if (depth == 0)
+            {
+                end = i;
+                break;
+            }
+
+            if (i - start + 1 >= maxLines)
+            {
+                end = i;
+                break;
+            }
+        }
+
+        if (end == -1)
+            end = Math.Min(lines.Length - 1, start + maxLines - 1);
+
+        var code = string.Join("\n", lines.Skip(start).Take(end - start + 1));
+
+        return JsonSerializer.Serialize(new
+        {
+            path,
+            name,
+            startLine = start + 1,
+            endLine = end + 1,
+            truncated = (end - start + 1) >= maxLines,
+            code
+        });
+    }
 }
