@@ -53,8 +53,9 @@ public class DBTools
                    root.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string Norm(string text) => text.Replace("\r\n", "\n");
-
+    private static string Norm(string text) =>
+    string.Join("\n", text.Replace("\r\n", "\n").Replace("\r", "\n")
+        .Split('\n').Select(l => l.TrimEnd()));
     private static void Log(string tool, string path, string detail = "")
     {
         try
